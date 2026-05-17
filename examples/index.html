@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>lowlatency-cam-streamer · WHEP smoke test</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0b0d10;
+      color: #e6eaf0;
+    }
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; background: #11151a; border-bottom: 1px solid #1d232b;
+    }
+    header h1 { margin: 0; font-size: 14px; font-weight: 600; flex: 1; }
+    .pill {
+      padding: 2px 10px; border-radius: 999px;
+      background: #1d232b; font-size: 12px; font-weight: 600;
+    }
+    .pill.live { background: #114b2c; color: #5be08b; }
+    .pill.err  { background: #4b1414; color: #ff8a8a; }
+    main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
+    @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+    video {
+      width: 100%; height: auto; aspect-ratio: 16/9;
+      background: #000; border-radius: 8px; outline: 1px solid #1d232b;
+    }
+    aside { display: flex; flex-direction: column; gap: 12px; }
+    .card {
+      background: #11151a; border: 1px solid #1d232b; border-radius: 8px;
+      padding: 12px;
+    }
+    label { display: block; font-size: 12px; color: #98a2b3; margin-bottom: 4px; }
+    input {
+      width: 100%; padding: 8px 10px; border-radius: 6px;
+      border: 1px solid #2a323d; background: #0b0d10; color: inherit;
+      font: inherit;
+    }
+    button {
+      padding: 8px 14px; border-radius: 6px; border: 0;
+      background: #2563eb; color: white; font-weight: 600; cursor: pointer;
+    }
+    button.secondary { background: #2a323d; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .stats { display: grid; grid-template-columns: 1fr auto; row-gap: 4px; column-gap: 12px; }
+    .stats dt { color: #98a2b3; font-size: 12px; }
+    .stats dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .actions { display: flex; gap: 8px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>lowlatency-cam-streamer · WHEP smoke test</h1>
+    <span id="status" class="pill">idle</span>
+  </header>
+  <main>
+    <video id="v" autoplay playsinline muted controls></video>
+    <aside>
+      <div class="card">
+        <label for="url">WHEP endpoint</label>
+        <input id="url" type="text" />
+        <div class="actions">
+          <button id="connect">Connect</button>
+          <button id="disconnect" class="secondary" disabled>Disconnect</button>
+        </div>
+      </div>
+      <div class="card">
+        <dl class="stats" id="stats">
+          <dt>Codec</dt><dd id="s-codec">—</dd>
+          <dt>Resolution</dt><dd id="s-res">—</dd>
+          <dt>Framerate</dt><dd id="s-fps">—</dd>
+          <dt>Bitrate</dt><dd id="s-br">—</dd>
+          <dt>Round-trip time</dt><dd id="s-rtt">—</dd>
+          <dt>Packet loss</dt><dd id="s-loss">—</dd>
+          <dt>Jitter</dt><dd id="s-jit">—</dd>
+          <dt>Frames decoded</dt><dd id="s-fr">—</dd>
+          <dt>Frames dropped</dt><dd id="s-drop">—</dd>
+        </dl>
+      </div>
+    </aside>
+  </main>
+  <script>
+    /**
+     * Minimal WHEP client. ~60 lines of real logic. No deps.
+     *
+     * 1. Build an SDP offer with a recvonly video (and audio) m-section.
+     * 2. POST it to the WHEP endpoint as `application/sdp`.
+     * 3. Use the returned SDP as the remote answer.
+     * 4. The Location response header points to the resource we DELETE on close.
+     */
+
+    const $ = (id) => document.getElementById(id);
+    const video = $('v');
+    const urlInput = $('url');
+    const status = $('status');
+    const btnConn = $('connect');
+    const btnDisc = $('disconnect');
+
+    const defaultURL = `${location.protocol === 'https:' ? 'https' : 'http'}://${location.hostname || 'localhost'}:8889/cam/whep`;
+    urlInput.value = new URLSearchParams(location.search).get('url') || defaultURL;
+
+    let pc = null;
+    let resourceURL = null;
+    let statsTimer = null;
+    let prevBytes = 0;
+    let prevTs = 0;
+
+    function setStatus(text, kind) {
+      status.textContent = text;
+      status.className = `pill${kind ? ' ' + kind : ''}`;
+    }
+
+    async function connect() {
+      btnConn.disabled = true;
+      setStatus('connecting');
+
+      pc = new RTCPeerConnection({
+        bundlePolicy: 'max-bundle',
+        // STUN is generally optional on a LAN; the server gathers host
+        // candidates and so does the browser. Add public STUN here if the
+        // operator's browser is behind symmetric NAT.
+        iceServers: [],
+      });
+
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.ontrack = (ev) => {
+        if (video.srcObject !== ev.streams[0]) {
+          video.srcObject = ev.streams[0];
+        }
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          setStatus('live', 'live');
+          btnDisc.disabled = false;
+          startStats();
+        } else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+          setStatus(pc.connectionState, 'err');
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const url = urlInput.value.trim();
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: offer.sdp,
+      });
+      if (!res.ok) {
+        setStatus(`HTTP ${res.status}`, 'err');
+        await disconnect();
+        btnConn.disabled = false;
+        return;
+      }
+      resourceURL = res.headers.get('Location');
+      if (resourceURL && !/^https?:/i.test(resourceURL)) {
+        resourceURL = new URL(resourceURL, url).toString();
+      }
+      const answer = await res.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    }
+
+    async function disconnect() {
+      stopStats();
+      btnDisc.disabled = true;
+      try {
+        if (resourceURL) {
+          // Best-effort cleanup of the WHEP session resource.
+          await fetch(resourceURL, { method: 'DELETE' }).catch(() => {});
+        }
+      } finally {
+        if (pc) { pc.close(); pc = null; }
+        resourceURL = null;
+        video.srcObject = null;
+        setStatus('idle');
+        btnConn.disabled = false;
+      }
+    }
+
+    function startStats() {
+      prevBytes = 0;
+      prevTs = 0;
+      statsTimer = setInterval(async () => {
+        if (!pc) return;
+        const stats = await pc.getStats();
+        let inboundVideo = null;
+        let remoteOutbound = null;
+        let candidatePair = null;
+        let codec = null;
+        stats.forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') inboundVideo = r;
+          if (r.type === 'remote-outbound-rtp' && r.kind === 'video') remoteOutbound = r;
+          if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) candidatePair = r;
+        });
+        if (inboundVideo && inboundVideo.codecId) codec = stats.get(inboundVideo.codecId);
+
+        $('s-codec').textContent = codec ? codec.mimeType.replace('video/', '') : '—';
+        $('s-res').textContent = inboundVideo && inboundVideo.frameWidth
+          ? `${inboundVideo.frameWidth}×${inboundVideo.frameHeight}` : '—';
+        $('s-fps').textContent = inboundVideo && inboundVideo.framesPerSecond != null
+          ? `${inboundVideo.framesPerSecond.toFixed(1)} fps` : '—';
+
+        if (inboundVideo) {
+          const bytes = inboundVideo.bytesReceived || 0;
+          const ts = inboundVideo.timestamp;
+          if (prevTs && ts > prevTs) {
+            const kbps = ((bytes - prevBytes) * 8) / (ts - prevTs);
+            $('s-br').textContent = `${kbps.toFixed(0)} kbps`;
+          }
+          prevBytes = bytes;
+          prevTs = ts;
+
+          $('s-loss').textContent = inboundVideo.packetsLost != null
+            ? `${inboundVideo.packetsLost} pkts` : '—';
+          $('s-jit').textContent = inboundVideo.jitter != null
+            ? `${(inboundVideo.jitter * 1000).toFixed(1)} ms` : '—';
+          $('s-fr').textContent = inboundVideo.framesDecoded ?? '—';
+          $('s-drop').textContent = inboundVideo.framesDropped ?? '—';
+        }
+        if (candidatePair && candidatePair.currentRoundTripTime != null) {
+          $('s-rtt').textContent = `${(candidatePair.currentRoundTripTime * 1000).toFixed(1)} ms`;
+        }
+      }, 1000);
+    }
+    function stopStats() {
+      if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+    }
+
+    btnConn.addEventListener('click', () => { connect().catch(console.error); });
+    btnDisc.addEventListener('click', () => { disconnect().catch(console.error); });
+    window.addEventListener('beforeunload', () => { disconnect().catch(() => {}); });
+  </script>
+</body>
+</html>

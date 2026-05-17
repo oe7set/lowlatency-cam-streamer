@@ -1,0 +1,75 @@
+# MediaMTX configuration template.
+# entrypoint.sh substitutes ${VAR} with envsubst before launching mediamtx.
+
+logLevel: info
+logDestinations: [stdout]
+
+# Disable APIs we don't expose. Less surface area, fewer ports to map.
+api: no
+metrics: no
+playback: no
+hls: no
+rtmp: no
+srt: no
+
+###############################################################################
+# RTSP loopback ingest from GStreamer.
+# Bound to 127.0.0.1 inside the container - never reachable from outside.
+###############################################################################
+rtsp: yes
+rtspTransports: [tcp]
+rtspAddress: 127.0.0.1:8554
+rtspAuthMethods: [basic]
+
+###############################################################################
+# WebRTC / WHEP egress to browsers.
+###############################################################################
+webrtc: yes
+webrtcAddress: :${WHEP_PORT}
+webrtcEncryption: no
+webrtcAllowOrigin: '*'
+webrtcTrustedProxies: []
+
+# ICE candidate strategy.
+# Host network mode means the container shares the host's interfaces,
+# so the default candidate gathering finds the right LAN IP. When operators
+# reach the mower over Tailscale, set ICE_HOST_CANDIDATE to the tailnet IP.
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfacesList: []
+webrtcAdditionalHosts: [${ICE_HOST_CANDIDATE_LIST}]
+webrtcSTUNServers: [${STUN_SERVER_LIST}]
+
+###############################################################################
+# Per-path settings. The single path receives the GStreamer push and serves
+# WHEP at /${STREAM_NAME}/whep.
+###############################################################################
+pathDefaults:
+  # Authenticate the local GStreamer push so a stray RTSP client on the host
+  # network can't hijack the path. Read-side stays open (browsers don't auth).
+  source: publisher
+  sourceOnDemand: no
+  # Drop the publish-buffer; we want frames forwarded immediately.
+  rtspRangeType: clock
+
+paths:
+  ${STREAM_NAME}:
+    publishUser: ${RTSP_USER}
+    publishPass: ${RTSP_PASS}
+    publishIPs: [127.0.0.1/32]
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+      - action: playback
+  - user: ${RTSP_USER}
+    pass: ${RTSP_PASS}
+    ips: [127.0.0.1/32]
+    permissions:
+      - action: publish
+        path: ${STREAM_NAME}

@@ -1,0 +1,59 @@
+# Drop this service into your existing docker-compose stack
+# (e.g. /opt/stacks/openmower/compose.yaml on OpenMowerOS).
+#
+# Browser endpoint after deploy:
+#   http://<mower-ip>:8889/cam/whep
+#
+# Replace <gh-user> with the GitHub user/org that owns the published image.
+
+services:
+  camera_streamer:
+    image: ghcr.io/<gh-user>/lowlatency-cam-streamer:${CAM_STREAMER_VERSION:-edge}
+    container_name: camera_streamer
+    restart: unless-stopped
+
+    # WebRTC needs the host network so ICE candidates advertise reachable IPs.
+    # Bridged networking would force per-port mapping for every dynamic UDP
+    # candidate, which doesn't work in practice.
+    network_mode: host
+
+    # /dev access for the USB camera (/dev/video0) and, on Pi, the in-kernel
+    # H.264 encoder (/dev/video11).
+    privileged: true
+    volumes:
+      - /dev:/dev
+
+    environment:
+      # ---- Latency vs. robustness ---------------------------------------
+      # low      : sub-150 ms LAN, breaks fast under packet loss
+      # balanced : the default, ~150 ms LAN, holds up to ~10 % loss
+      # robust   : 200-350 ms LAN, keeps streaming through bad WiFi
+      LATENCY_PROFILE: balanced
+
+      # ---- Camera --------------------------------------------------------
+      CAMERA_DEVICE: /dev/video0
+      CAMERA_WIDTH: 1920
+      CAMERA_HEIGHT: 1080
+      CAMERA_FRAMERATE: 30
+      CAMERA_INPUT_FORMAT: mjpeg
+
+      # ---- WHEP endpoint -------------------------------------------------
+      WHEP_PORT: 8889
+      STREAM_NAME: cam
+
+      # ---- Encoder selection (auto detects Pi v4l2 / Intel VAAPI / x264) -
+      # ENCODER: auto
+
+      # ---- Optional per-knob overrides (override profile defaults) ------
+      # BITRATE_MIN_KBPS: 500
+      # BITRATE_MAX_KBPS: 6000
+      # BITRATE_START_KBPS: 4000
+      # KEYFRAME_INTERVAL_S: 2
+      # FEC_PERCENT: 10
+      # JITTER_BUFFER_HINT_MS: 50
+      # RTX_ENABLED: "true"
+
+      # ---- ICE / NAT (only set when reaching the mower over Tailscale,
+      #      cellular, or any non-LAN path)
+      # ICE_HOST_CANDIDATE: 100.64.x.y
+      # STUN_SERVER: stun:stun.l.google.com:19302

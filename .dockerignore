@@ -1,0 +1,7 @@
+.git
+.github
+README.md
+LICENSE
+compose-snippet.yaml
+examples/
+*.md
