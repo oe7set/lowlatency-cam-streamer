@@ -27,7 +27,7 @@ rtspAuthMethods: [basic]
 webrtc: yes
 webrtcAddress: :${WHEP_PORT}
 webrtcEncryption: no
-webrtcAllowOrigin: '*'
+webrtcAllowOrigins: ['*']
 webrtcTrustedProxies: []
 
 # ICE candidate strategy.
@@ -39,7 +39,8 @@ webrtcLocalTCPAddress: :8189
 webrtcIPsFromInterfaces: yes
 webrtcIPsFromInterfacesList: []
 webrtcAdditionalHosts: [${ICE_HOST_CANDIDATE_LIST}]
-webrtcSTUNServers: [${STUN_SERVER_LIST}]
+webrtcICEServers2:
+${WEBRTC_ICE_SERVERS_BLOCK}
 
 ###############################################################################
 # Per-path settings. The single path receives the GStreamer push and serves
@@ -50,14 +51,9 @@ pathDefaults:
   # network can't hijack the path. Read-side stays open (browsers don't auth).
   source: publisher
   sourceOnDemand: no
-  # Drop the publish-buffer; we want frames forwarded immediately.
-  rtspRangeType: clock
 
 paths:
   ${STREAM_NAME}:
-    publishUser: ${RTSP_USER}
-    publishPass: ${RTSP_PASS}
-    publishIPs: [127.0.0.1/32]
 
 authMethod: internal
 authInternalUsers:

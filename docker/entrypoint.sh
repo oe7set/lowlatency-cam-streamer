@@ -84,12 +84,33 @@ build_yaml_list() {
   printf '%s' "$out"
 }
 
+build_ice_servers_block() {
+  # Render comma-separated STUN URIs as a YAML block list of objects, the
+  # shape mediamtx's webrtcICEServers2 expects:
+  #   - url: stun:stun.l.google.com:19302
+  # When empty, replace the indented placeholder with an inline empty list
+  # so the surrounding key parses as `webrtcICEServers2: []`.
+  local input="$1"
+  if [ -z "$input" ]; then
+    printf '  []'
+    return
+  fi
+  local IFS=','
+  local first=1
+  for item in $input; do
+    item="$(echo "$item" | xargs)"
+    [ -z "$item" ] && continue
+    if [ $first -eq 1 ]; then first=0; else printf '\n'; fi
+    printf '  - url: %s' "$item"
+  done
+}
+
 if [ "$ICE_HOST_CANDIDATE" = "auto" ] || [ -z "$ICE_HOST_CANDIDATE" ]; then
   ICE_HOST_CANDIDATE_LIST=""
 else
   ICE_HOST_CANDIDATE_LIST="$(build_yaml_list "$ICE_HOST_CANDIDATE")"
 fi
-STUN_SERVER_LIST="$(build_yaml_list "$STUN_SERVER")"
+WEBRTC_ICE_SERVERS_BLOCK="$(build_ice_servers_block "$STUN_SERVER")"
 
 ###############################################################################
 # 4. Pick encoder pipeline.
@@ -127,7 +148,7 @@ export LATENCY_PROFILE CAMERA_DEVICE CAMERA_WIDTH CAMERA_HEIGHT CAMERA_FRAMERATE
        KEYFRAME_INTERVAL_S KEYFRAME_INTERVAL_FRAMES \
        FEC_PERCENT JITTER_BUFFER_HINT_MS RTX_ENABLED \
        WHEP_PORT STREAM_NAME RTSP_USER RTSP_PASS \
-       ICE_HOST_CANDIDATE_LIST STUN_SERVER_LIST
+       ICE_HOST_CANDIDATE_LIST WEBRTC_ICE_SERVERS_BLOCK
 
 MEDIAMTX_YML=/opt/streamer/config/mediamtx.yml
 envsubst < /opt/streamer/config/mediamtx.yml.tmpl > "$MEDIAMTX_YML"
@@ -149,7 +170,7 @@ log "  JITTER HINT       : ${JITTER_BUFFER_HINT_MS}ms"
 log "  WHEP              : http://<host>:${WHEP_PORT}/${STREAM_NAME}/whep"
 log "  RTSP loopback     : rtsp://127.0.0.1:8554/${STREAM_NAME}"
 log "  ICE host hint     : ${ICE_HOST_CANDIDATE_LIST:-auto}"
-log "  STUN              : ${STUN_SERVER_LIST:-none}"
+log "  STUN              : ${STUN_SERVER:-none}"
 log "=============================================================="
 
 ###############################################################################
@@ -176,13 +197,30 @@ mediamtx_pid=$!
 
 # Wait for the RTSP listener to be ready before we start pushing frames.
 # Otherwise GStreamer races mediamtx and exits with "Connection refused".
+# Bails out fast and loud if mediamtx itself died (config rejected, port
+# already in use, ...) instead of looping 50x with the same misleading
+# "Connection refused" line that hides the real cause.
+ready=0
 for _ in $(seq 1 50); do
+  if ! kill -0 "$mediamtx_pid" 2>/dev/null; then
+    log "FATAL: mediamtx exited before its RTSP listener came up - check the"
+    log "       error line printed above (typically a rejected config field)."
+    wait "$mediamtx_pid" 2>/dev/null || true
+    exit 1
+  fi
   if exec 3<>/dev/tcp/127.0.0.1/8554 2>/dev/null; then
     exec 3<&- 3>&-
+    ready=1
     break
   fi
   sleep 0.1
 done
+if [ $ready -eq 0 ]; then
+  log "FATAL: mediamtx is alive but its RTSP listener didn't come up within 5s"
+  kill -TERM "$mediamtx_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+  exit 1
+fi
 
 log "starting gstreamer pipeline ..."
 # shellcheck disable=SC2086
