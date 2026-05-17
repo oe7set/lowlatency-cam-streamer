@@ -17,7 +17,7 @@ WORKDIR /tmp
 RUN set -eux; \
     case "$TARGETARCH" in \
       amd64) MTX_ARCH=linux_amd64 ;; \
-      arm64) MTX_ARCH=linux_arm64v8 ;; \
+      arm64) MTX_ARCH=linux_arm64 ;; \
       *) echo "unsupported arch: $TARGETARCH" && exit 1 ;; \
     esac; \
     curl -fL "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/mediamtx_v${MEDIAMTX_VERSION}_${MTX_ARCH}.tar.gz" \
@@ -45,13 +45,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gstreamer1.0-x \
  && rm -rf /var/lib/apt/lists/*
 
-# VA-API stack only on amd64 (Pi has no VA-API).
+# VA-API stack only on amd64 (Pi has no VA-API). Free drivers only -
+# intel-media-va-driver (without -non-free) covers modern Intel iGPUs and
+# stays in Debian main, so we don't need to enable non-free repos.
 RUN set -eux; \
     if [ "$TARGETARCH" = "amd64" ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         gstreamer1.0-vaapi \
         va-driver-all \
-        intel-media-va-driver-non-free \
+        intel-media-va-driver \
         vainfo \
       && rm -rf /var/lib/apt/lists/*; \
     fi
