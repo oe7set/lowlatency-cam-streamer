@@ -27,8 +27,14 @@ RUN set -eux; \
 
 FROM debian:bookworm-slim AS runtime
 ARG TARGETARCH
+# Stamped by the GitHub Actions workflow (steps.meta.outputs.version). Local
+# builds without --build-arg get "dev". Surfaced in the entrypoint banner so
+# `docker logs` immediately tells you which build is running.
+ARG VERSION=dev
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV IMAGE_VERSION=$VERSION
+LABEL org.opencontainers.image.version="$VERSION"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tini \

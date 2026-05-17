@@ -158,8 +158,18 @@ GST_PIPELINE="$(envsubst < "$PIPELINE_TEMPLATE" | tr -d '\\\n')"
 ###############################################################################
 # 6. Print the resolved configuration once. Trivializes ops debugging.
 ###############################################################################
+# GStreamer log level: 2 = WARNING (shows the real reason a pipeline died,
+# unlike the default of 1 which produces "Execution ended after 0:00:00.x"
+# with no further hint). Override with GST_DEBUG_LEVEL=3 for INFO etc.
+GST_DEBUG_LEVEL="${GST_DEBUG_LEVEL:-2}"
+export GST_DEBUG="$GST_DEBUG_LEVEL"
+
+# Image version is baked at build time via ARG VERSION (see Dockerfile + GHA).
+# Falls back to 'dev' for local builds.
+IMAGE_VERSION="${IMAGE_VERSION:-dev}"
+
 log "=============================================================="
-log "  lowlatency-cam-streamer resolved configuration"
+log "  lowlatency-cam-streamer $IMAGE_VERSION"
 log "  LATENCY_PROFILE   : $LATENCY_PROFILE"
 log "  ENCODER           : $ENCODER  ($PIPELINE_TEMPLATE)"
 log "  CAMERA            : $CAMERA_DEVICE @ ${CAMERA_WIDTH}x${CAMERA_HEIGHT}@${CAMERA_FRAMERATE}fps ($CAMERA_INPUT_FORMAT)"
@@ -171,7 +181,21 @@ log "  WHEP              : http://<host>:${WHEP_PORT}/${STREAM_NAME}/whep"
 log "  RTSP loopback     : rtsp://127.0.0.1:8554/${STREAM_NAME}"
 log "  ICE host hint     : ${ICE_HOST_CANDIDATE_LIST:-auto}"
 log "  STUN              : ${STUN_SERVER:-none}"
+log "  GST_DEBUG         : $GST_DEBUG"
 log "=============================================================="
+
+# Dump what the camera actually advertises - cheaper than guessing why
+# v4l2src negotiates 640x480@15 when the user asked for 1920x1080@30.
+# Limited to MJPEG entries so the log stays scannable.
+if [ -e "$CAMERA_DEVICE" ] && command -v v4l2-ctl >/dev/null 2>&1; then
+  log "  camera capabilities ($CAMERA_DEVICE, MJPEG only):"
+  v4l2-ctl -d "$CAMERA_DEVICE" --list-formats-ext 2>/dev/null \
+    | awk '/Pixel Format.*MJPG/,/Pixel Format/' \
+    | sed 's/^/  /' \
+    | head -40 >&2 \
+    || log "  (v4l2-ctl probe failed - device may not be ready yet)"
+  log "=============================================================="
+fi
 
 ###############################################################################
 # 7. Supervise: mediamtx + gst-launch in parallel; if either dies, kill both
