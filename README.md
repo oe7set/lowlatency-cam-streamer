@@ -27,6 +27,10 @@ browser  (RTCPeerConnection)
 GStreamer and MediaMTX run in the same container, supervised by `tini`.
 If either dies, the container exits and Docker restarts it.
 
+The WebRTC/WHEP termination is owned by MediaMTX, so we don't need
+`gst-plugins-rs` (`webrtcsink`, `rtspsrc2`, ...) in the image. That keeps
+the build to plain Debian Bookworm packages, no Rust toolchain.
+
 ## Why not just MJPEG / mjpg-streamer?
 
 | Problem with MJPEG over WiFi             | What WebRTC does instead                           |
