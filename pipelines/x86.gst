@@ -1,6 +1,6 @@
 v4l2src device=${CAMERA_DEVICE} do-timestamp=true ! \
   image/jpeg,width=${CAMERA_WIDTH},height=${CAMERA_HEIGHT},framerate=${CAMERA_FRAMERATE}/1 ! \
-  jpegparse ! jpegdec ! \
+  jpegdec ! \
   videoconvert ! video/x-raw,format=NV12 ! \
   vah264enc \
     bitrate=${BITRATE_START_KBPS} \
