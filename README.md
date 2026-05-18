@@ -50,7 +50,7 @@ docker run --rm \
   --privileged --network host \
   -v /dev:/dev \
   -e LATENCY_PROFILE=balanced \
-  ghcr.io/oe7set/lowlatency-cam-streamer:1.0.13
+  ghcr.io/oe7set/lowlatency-cam-streamer:latest
 ```
 
 Open `examples/index.html` in a browser, set the URL to
