@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       gettext-base \
       v4l-utils \
+      psmisc \
       gstreamer1.0-tools \
       gstreamer1.0-plugins-base \
       gstreamer1.0-plugins-good \
@@ -50,6 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gstreamer1.0-rtsp \
       gstreamer1.0-x \
  && rm -rf /var/lib/apt/lists/*
+
+# Pi-only: vcgencmd lives in libraspberrypi-bin and is only available in the
+# Raspberry Pi APT repo, not Debian main. Skip it on amd64 / on a builder
+# without the repo - the entrypoint guards on `command -v vcgencmd` anyway.
+RUN set -eux; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+      apt-get update; \
+      apt-get install -y --no-install-recommends libraspberrypi-bin \
+        || echo "libraspberrypi-bin not available - skipping vcgencmd"; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # VA-API stack only on amd64 (Pi has no VA-API). Free drivers only -
 # intel-media-va-driver (without -non-free) covers modern Intel iGPUs and

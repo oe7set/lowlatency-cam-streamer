@@ -187,6 +187,18 @@ log "  RTSP loopback     : rtsp://127.0.0.1:8554/${STREAM_NAME}"
 log "  ICE host hint     : ${ICE_HOST_CANDIDATE_LIST:-auto}"
 log "  STUN              : ${STUN_SERVER:-none}"
 log "  GST_DEBUG         : $GST_DEBUG"
+# Pi-only diagnostics: surface the two things that turn the bcm2835 H.264
+# encoder's STREAMON ioctl into ESRCH (3) - too little GPU split memory or
+# something else holding /dev/video11. Both are no-ops on x86 / non-Pi.
+if [ "$ENCODER" = "pi" ]; then
+  if command -v vcgencmd >/dev/null 2>&1; then
+    log "  GPU memory        : $(vcgencmd get_mem gpu 2>/dev/null || echo unknown)"
+  fi
+  if [ -e /dev/video11 ] && command -v fuser >/dev/null 2>&1; then
+    holders="$(fuser /dev/video11 2>/dev/null | tr -s ' ')"
+    log "  /dev/video11 held : ${holders:-none}"
+  fi
+fi
 log "=============================================================="
 
 # Dump what the camera actually advertises - cheaper than guessing why
