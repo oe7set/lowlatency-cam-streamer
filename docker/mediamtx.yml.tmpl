@@ -31,12 +31,15 @@ webrtcAllowOrigins: ['*']
 webrtcTrustedProxies: []
 
 # ICE candidate strategy.
-# Host network mode means the container shares the host's interfaces,
-# so the default candidate gathering finds the right LAN IP. When operators
-# reach the mower over Tailscale, set ICE_HOST_CANDIDATE to the tailnet IP.
+# entrypoint.sh fills ICE_HOST_CANDIDATE_LIST with either the auto-detected
+# default-route IP or the operator-supplied list (Tailscale, multiple LANs,
+# ...) and sets ICE_USE_INTERFACES=no so mediamtx ONLY announces those
+# explicit hosts. Otherwise (no list, no detection) it falls back to
+# enumerating every interface, which makes browsers waste their ICE
+# connectivity-check budget on docker-bridge / APIPA / loopback IPs.
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
-webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfaces: ${ICE_USE_INTERFACES}
 webrtcIPsFromInterfacesList: []
 webrtcAdditionalHosts: [${ICE_HOST_CANDIDATE_LIST}]
 webrtcICEServers2:

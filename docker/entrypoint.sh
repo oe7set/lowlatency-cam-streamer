@@ -105,11 +105,40 @@ build_ice_servers_block() {
   done
 }
 
+# Resolve the ICE host advertisement. The browser needs a candidate IP
+# that's actually reachable from its network, and with `network_mode: host`
+# we'd otherwise gather every host interface (docker-bridge, APIPA fallback,
+# loopback...) and let the browser race them all to the timeout.
+detect_lan_ip() {
+  local iface ip
+  iface="$(ip -4 route show default 2>/dev/null | awk '/default/ {print $5; exit}')"
+  [ -z "$iface" ] && return
+  ip="$(ip -4 addr show "$iface" 2>/dev/null | awk '/inet / {print $2; exit}' | cut -d/ -f1)"
+  printf '%s' "$ip"
+}
+
+ICE_HOST_SOURCE=""
 if [ "$ICE_HOST_CANDIDATE" = "auto" ] || [ -z "$ICE_HOST_CANDIDATE" ]; then
-  ICE_HOST_CANDIDATE_LIST=""
+  detected_ip="$(detect_lan_ip || true)"
+  if [ -n "$detected_ip" ]; then
+    ICE_HOST_CANDIDATE="$detected_ip"
+    ICE_HOST_SOURCE="auto"
+  else
+    ICE_HOST_CANDIDATE=""
+    ICE_HOST_SOURCE="all-interfaces"
+  fi
 else
-  ICE_HOST_CANDIDATE_LIST="$(build_yaml_list "$ICE_HOST_CANDIDATE")"
+  ICE_HOST_SOURCE="env"
 fi
+
+if [ -n "$ICE_HOST_CANDIDATE" ]; then
+  ICE_HOST_CANDIDATE_LIST="$(build_yaml_list "$ICE_HOST_CANDIDATE")"
+  ICE_USE_INTERFACES=no
+else
+  ICE_HOST_CANDIDATE_LIST=""
+  ICE_USE_INTERFACES=yes
+fi
+
 WEBRTC_ICE_SERVERS_BLOCK="$(build_ice_servers_block "$STUN_SERVER")"
 
 ###############################################################################
@@ -148,7 +177,7 @@ export LATENCY_PROFILE CAMERA_DEVICE CAMERA_WIDTH CAMERA_HEIGHT CAMERA_FRAMERATE
        KEYFRAME_INTERVAL_S KEYFRAME_INTERVAL_FRAMES \
        FEC_PERCENT JITTER_BUFFER_HINT_MS RTX_ENABLED \
        WHEP_PORT STREAM_NAME RTSP_USER RTSP_PASS \
-       ICE_HOST_CANDIDATE_LIST WEBRTC_ICE_SERVERS_BLOCK
+       ICE_HOST_CANDIDATE_LIST WEBRTC_ICE_SERVERS_BLOCK ICE_USE_INTERFACES
 
 MEDIAMTX_YML=/opt/streamer/config/mediamtx.yml
 envsubst < /opt/streamer/config/mediamtx.yml.tmpl > "$MEDIAMTX_YML"
@@ -184,7 +213,11 @@ log "  FEC               : ${FEC_PERCENT}%"
 log "  JITTER HINT       : ${JITTER_BUFFER_HINT_MS}ms"
 log "  WHEP              : http://<host>:${WHEP_PORT}/${STREAM_NAME}/whep"
 log "  RTSP loopback     : rtsp://127.0.0.1:8554/${STREAM_NAME}"
-log "  ICE host hint     : ${ICE_HOST_CANDIDATE_LIST:-auto}"
+case "$ICE_HOST_SOURCE" in
+  auto) log "  ICE host          : $ICE_HOST_CANDIDATE (auto-detected from default route)" ;;
+  env)  log "  ICE host          : $ICE_HOST_CANDIDATE (from ICE_HOST_CANDIDATE env)" ;;
+  *)    log "  ICE host          : auto-detect failed - announcing all interfaces" ;;
+esac
 log "  STUN              : ${STUN_SERVER:-none}"
 log "  GST_DEBUG         : $GST_DEBUG"
 # Pi-only diagnostics: surface the two things that turn the bcm2835 H.264

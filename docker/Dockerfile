@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tini \
       ca-certificates \
       gettext-base \
+      iproute2 \
       v4l-utils \
       psmisc \
       gstreamer1.0-tools \
