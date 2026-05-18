@@ -158,11 +158,16 @@ GST_PIPELINE="$(envsubst < "$PIPELINE_TEMPLATE" | tr -d '\\\n')"
 ###############################################################################
 # 6. Print the resolved configuration once. Trivializes ops debugging.
 ###############################################################################
-# GStreamer log level: 2 = WARNING (shows the real reason a pipeline died,
-# unlike the default of 1 which produces "Execution ended after 0:00:00.x"
-# with no further hint). Override with GST_DEBUG_LEVEL=3 for INFO etc.
-GST_DEBUG_LEVEL="${GST_DEBUG_LEVEL:-2}"
-export GST_DEBUG="$GST_DEBUG_LEVEL"
+# GStreamer log level. Plain integers like "2" only catch generic
+# WARNING/ERROR; pipelines that die during caps negotiation or v4l2 ioctl
+# require category-specific levels to surface a useful message. The default
+# below names the categories we care about explicitly:
+#   *:2                generic WARNING for everything
+#   GST_PADS:3         caps negotiation (the silent killer)
+#   v4l2*:4            v4l2src + v4l2h264enc internals
+#   GST_TRACER:0       suppress tracer noise
+# Override with GST_DEBUG=... for full custom control.
+export GST_DEBUG="${GST_DEBUG:-*:2,GST_PADS:3,v4l2*:4,GST_TRACER:0}"
 
 # Image version is baked at build time via ARG VERSION (see Dockerfile + GHA).
 # Falls back to 'dev' for local builds.
@@ -185,15 +190,17 @@ log "  GST_DEBUG         : $GST_DEBUG"
 log "=============================================================="
 
 # Dump what the camera actually advertises - cheaper than guessing why
-# v4l2src negotiates 640x480@15 when the user asked for 1920x1080@30.
-# Limited to MJPEG entries so the log stays scannable.
+# v4l2src negotiates a different resolution than requested. We print the
+# full list-formats-ext output (capped at 60 lines so the log stays
+# scannable for cameras with very long format menus).
 if [ -e "$CAMERA_DEVICE" ] && command -v v4l2-ctl >/dev/null 2>&1; then
-  log "  camera capabilities ($CAMERA_DEVICE, MJPEG only):"
-  v4l2-ctl -d "$CAMERA_DEVICE" --list-formats-ext 2>/dev/null \
-    | awk '/Pixel Format.*MJPG/,/Pixel Format/' \
-    | sed 's/^/  /' \
-    | head -40 >&2 \
-    || log "  (v4l2-ctl probe failed - device may not be ready yet)"
+  log "  camera capabilities ($CAMERA_DEVICE):"
+  caps_output="$(v4l2-ctl -d "$CAMERA_DEVICE" --list-formats-ext 2>&1 | head -60 || true)"
+  if [ -n "$caps_output" ]; then
+    printf '%s\n' "$caps_output" | sed 's/^/    /' >&2
+  else
+    log "    (v4l2-ctl returned no output - device may not be ready yet)"
+  fi
   log "=============================================================="
 fi
 
@@ -247,8 +254,13 @@ if [ $ready -eq 0 ]; then
 fi
 
 log "starting gstreamer pipeline ..."
+log "  pipeline: $GST_PIPELINE"
+# `-v` prints every caps negotiation step. Together with GST_DEBUG above
+# this is what turns "Execution ended after 0:00:00.x" with no message
+# into a usable error trace. Stderr is merged so docker logs sees
+# everything in order.
 # shellcheck disable=SC2086
-gst-launch-1.0 -e $GST_PIPELINE &
+gst-launch-1.0 -v -e $GST_PIPELINE 2>&1 &
 gst_pid=$!
 
 # Block on either child. Whichever exits first decides the container fate.
