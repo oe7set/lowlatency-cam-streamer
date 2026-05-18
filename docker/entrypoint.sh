@@ -324,13 +324,20 @@ fi
 
 log "starting gstreamer pipeline ..."
 log "  pipeline: $GST_PIPELINE"
-# `-e` propagates EOS on shutdown so the pipeline drains cleanly. We do NOT
-# pass `-v`: with a healthy stream that prints multi-KB RTP-session-stats
-# blobs every second and drowns out everything else in `docker logs`. To
-# debug caps negotiation issues, set GST_DEBUG=... and recreate the
-# container.
+# `-v` is REQUIRED here, not cosmetic. It looks like "verbose property
+# notifications" but on the Pi bcm2835-codec path it keeps the event loop
+# warm enough that rtpbin/rtpsession timestamps and drains RTP packets
+# cleanly. Without `-v`, mediamtx happily accepts WebRTC sessions and
+# reports the stream as online, but browsers receive zero playable bytes.
+# Reproduced in v1.0.13 (no -v) vs v1.0.12 (with -v): identical pipeline,
+# identical RTSP push, but only the `-v` build delivers a working stream.
+# `-e` propagates EOS on shutdown so the pipeline drains cleanly.
+# The grep filter discards the multi-KB RTP-session-stats blobs `-v` emits
+# every second so `docker logs` stays scannable. Everything else
+# (caps negotiation, errors, state changes) still passes through.
 # shellcheck disable=SC2086
-gst-launch-1.0 -e $GST_PIPELINE 2>&1 &
+gst-launch-1.0 -v -e $GST_PIPELINE 2>&1 \
+  | grep --line-buffered -v 'rtpsession0: stats =' &
 gst_pid=$!
 
 # Block on either child. Whichever exits first decides the container fate.
