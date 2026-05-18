@@ -5,6 +5,18 @@
 #   http://<mower-ip>:8889/cam/whep
 #
 # Replace <gh-user> with the GitHub user/org that owns the published image.
+#
+# === Raspberry Pi prerequisite ===
+# For 1080p hardware H.264 encoding via /dev/video11 (bcm2835-codec) the
+# Pi needs a non-default GPU memory split. Set this on the *host* once,
+# then reboot:
+#
+#   echo 'gpu_mem=256' | sudo tee -a /boot/firmware/config.txt
+#   sudo reboot
+#
+# Verify after reboot with `vcgencmd get_mem gpu` - should report 256M.
+# Without this the encoder fails STREAMON with errno 3 (ESRCH) and the
+# pipeline dies after ~0.5 s.
 
 services:
   camera_streamer:

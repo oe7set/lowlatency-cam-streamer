@@ -195,8 +195,14 @@ if [ "$ENCODER" = "pi" ]; then
     log "  GPU memory        : $(vcgencmd get_mem gpu 2>/dev/null || echo unknown)"
   fi
   if [ -e /dev/video11 ] && command -v fuser >/dev/null 2>&1; then
-    holders="$(fuser /dev/video11 2>/dev/null | tr -s ' ')"
-    log "  /dev/video11 held : ${holders:-none}"
+    # `timeout 2s` guards against fuser hanging on Pi VPU locks. In
+    # privileged Docker containers fuser walks /proc/*/fd via netlink
+    # ioctls that block indefinitely when the bcm2835-codec driver
+    # holds an exclusive lock - observed in v1.0.7 as a banner-only
+    # restart loop where mediamtx never even started. Better to drop
+    # the diagnostic line than to wedge the container.
+    holders="$(timeout 2s fuser /dev/video11 2>/dev/null | tr -s ' ' || true)"
+    log "  /dev/video11 held : ${holders:-none (or fuser timed out)}"
   fi
 fi
 log "=============================================================="
