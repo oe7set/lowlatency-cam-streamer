@@ -53,11 +53,14 @@ esac
 : "${WHEP_PORT:=8889}"
 : "${STREAM_NAME:=cam}"
 : "${ICE_HOST_CANDIDATE:=auto}"
-# Default STUN server. Even on a single LAN, a reflexive candidate gives the
-# browser and the server a stable view of each other when the Pi has multiple
-# interfaces (eth0/wlan0/docker bridges) and the kernel might otherwise pick a
-# source IP the browser didn't negotiate. Set STUN_SERVER="" to disable.
-: "${STUN_SERVER:=stun:stun.l.google.com:19302}"
+# STUN is empty by default. On a flat LAN the host candidate is sufficient,
+# and a srflx candidate from a public STUN server can actively hurt: it
+# advertises the Pi's *public* WAN address, which the browser sitting in the
+# same LAN cannot reach. We have observed Chrome flapping ICE state between
+# 'succeeded' and 'disconnected' on Pi setups where the STUN reflexive
+# address pointed at an unreachable IP. Operators on Tailscale, cellular,
+# or cross-NAT paths can opt in by setting STUN_SERVER explicitly.
+: "${STUN_SERVER:=}"
 : "${RTX_ENABLED:=true}"
 
 # Loopback credentials between gst and mediamtx. Random per container start

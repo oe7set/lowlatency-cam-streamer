@@ -163,6 +163,36 @@ Pin a specific path by setting `ENCODER` to `pi`, `vaapi`, or `software`.
 * USB UVC at 1080p30 only works as MJPEG capture. Raw YUYV needs USB 3.0
   bandwidth.
 
+## Pi with multiple network interfaces
+
+If the Pi has more than one IP-bearing interface (e.g. `wlan0` to your LAN
+plus `eth0` connected to the OpenMower mainboard / xCore at `172.16.78.1/24`),
+the Linux kernel picks the source IP for outgoing UDP packets based on its
+routing table. With `network_mode: host` the WebRTC UDP listener inherits
+that decision, and on a misrouted setup the browser will receive media
+packets with a source IP it never negotiated and silently drop them.
+
+The container always binds the WebRTC UDP listener to the auto-detected
+default-route IP, but the kernel still chooses the route. Diagnose with:
+
+```bash
+# What source IP / interface will the kernel use to reach the browser?
+ip route get <browser-ip>
+```
+
+Expected: `... dev wlan0 src <pi-lan-ip> ...`. If the route goes via
+`eth0` instead, add an explicit, higher-priority host route for the LAN:
+
+```bash
+sudo ip route add 192.168.1.0/24 dev wlan0 src 192.168.1.117 metric 1
+# or persist via /etc/dhcpcd.conf / systemd-networkd
+```
+
+The container banner prints `WebRTC UDP bind` and the auto-detected ICE host
+so you can verify which IP the server announces. If the browser shows
+`bytesReceived: 0` in `chrome://webrtc-internals` despite an ICE
+candidate-pair `succeeded`, this is almost always the cause.
+
 ## License
 
 MIT - see [LICENSE](LICENSE).
