@@ -205,16 +205,15 @@ GST_PIPELINE="$(envsubst < "$PIPELINE_TEMPLATE" | tr -d '\\\n')"
 ###############################################################################
 # 6. Print the resolved configuration once. Trivializes ops debugging.
 ###############################################################################
-# GStreamer log level. Plain integers like "2" only catch generic
-# WARNING/ERROR; pipelines that die during caps negotiation or v4l2 ioctl
-# require category-specific levels to surface a useful message. The default
-# below names the categories we care about explicitly:
-#   *:2                generic WARNING for everything
-#   GST_PADS:3         caps negotiation (the silent killer)
-#   v4l2*:4            v4l2src + v4l2h264enc internals
-#   GST_TRACER:0       suppress tracer noise
-# Override with GST_DEBUG=... for full custom control.
-export GST_DEBUG="${GST_DEBUG:-*:2,GST_PADS:3,v4l2*:4,GST_TRACER:0}"
+# GStreamer log level. Default is errors only - a healthy pipeline produces
+# no output past the initial setup, so `docker logs` stays scannable for the
+# things ops actually cares about (mediamtx WebRTC session events).
+# When something breaks, raise it via the GST_DEBUG env. The most useful
+# diagnostic recipe for this image is:
+#   GST_DEBUG="*:2,GST_PADS:3,v4l2*:4,GST_TRACER:0"
+# which surfaces caps-negotiation failures and v4l2 ioctl errors - the two
+# silent killers we hit while bringing the Pi pipeline up.
+export GST_DEBUG="${GST_DEBUG:-*:1}"
 
 # Image version is baked at build time via ARG VERSION (see Dockerfile + GHA).
 # Falls back to 'dev' for local builds.
@@ -325,12 +324,13 @@ fi
 
 log "starting gstreamer pipeline ..."
 log "  pipeline: $GST_PIPELINE"
-# `-v` prints every caps negotiation step. Together with GST_DEBUG above
-# this is what turns "Execution ended after 0:00:00.x" with no message
-# into a usable error trace. Stderr is merged so docker logs sees
-# everything in order.
+# `-e` propagates EOS on shutdown so the pipeline drains cleanly. We do NOT
+# pass `-v`: with a healthy stream that prints multi-KB RTP-session-stats
+# blobs every second and drowns out everything else in `docker logs`. To
+# debug caps negotiation issues, set GST_DEBUG=... and recreate the
+# container.
 # shellcheck disable=SC2086
-gst-launch-1.0 -v -e $GST_PIPELINE 2>&1 &
+gst-launch-1.0 -e $GST_PIPELINE 2>&1 &
 gst_pid=$!
 
 # Block on either child. Whichever exits first decides the container fate.
