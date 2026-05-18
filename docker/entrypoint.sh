@@ -53,7 +53,11 @@ esac
 : "${WHEP_PORT:=8889}"
 : "${STREAM_NAME:=cam}"
 : "${ICE_HOST_CANDIDATE:=auto}"
-: "${STUN_SERVER:=}"
+# Default STUN server. Even on a single LAN, a reflexive candidate gives the
+# browser and the server a stable view of each other when the Pi has multiple
+# interfaces (eth0/wlan0/docker bridges) and the kernel might otherwise pick a
+# source IP the browser didn't negotiate. Set STUN_SERVER="" to disable.
+: "${STUN_SERVER:=stun:stun.l.google.com:19302}"
 : "${RTX_ENABLED:=true}"
 
 # Loopback credentials between gst and mediamtx. Random per container start
@@ -134,9 +138,19 @@ fi
 if [ -n "$ICE_HOST_CANDIDATE" ]; then
   ICE_HOST_CANDIDATE_LIST="$(build_yaml_list "$ICE_HOST_CANDIDATE")"
   ICE_USE_INTERFACES=no
+  # When we know the LAN IP, bind the WebRTC UDP listener to it explicitly
+  # instead of 0.0.0.0. With a 0.0.0.0 bind the kernel picks the source IP at
+  # send time per-route, and on a multi-interface Pi (eth0=172.16.x for the
+  # mainboard link, wlan0=192.168.x for the LAN) it sometimes sends RTP from
+  # the wrong source IP - the browser then drops those packets because they
+  # don't match the candidate it negotiated. Take the first IP from the list
+  # if there are several (e.g. user supplied "tailscale,lan").
+  WEBRTC_LISTEN_IP="${ICE_HOST_CANDIDATE%%,*}"
+  WEBRTC_LISTEN_IP="$(echo "$WEBRTC_LISTEN_IP" | xargs)"
 else
   ICE_HOST_CANDIDATE_LIST=""
   ICE_USE_INTERFACES=yes
+  WEBRTC_LISTEN_IP=""
 fi
 
 WEBRTC_ICE_SERVERS_BLOCK="$(build_ice_servers_block "$STUN_SERVER")"
@@ -177,7 +191,8 @@ export LATENCY_PROFILE CAMERA_DEVICE CAMERA_WIDTH CAMERA_HEIGHT CAMERA_FRAMERATE
        KEYFRAME_INTERVAL_S KEYFRAME_INTERVAL_FRAMES \
        FEC_PERCENT JITTER_BUFFER_HINT_MS RTX_ENABLED \
        WHEP_PORT STREAM_NAME RTSP_USER RTSP_PASS \
-       ICE_HOST_CANDIDATE_LIST WEBRTC_ICE_SERVERS_BLOCK ICE_USE_INTERFACES
+       ICE_HOST_CANDIDATE_LIST WEBRTC_ICE_SERVERS_BLOCK ICE_USE_INTERFACES \
+       WEBRTC_LISTEN_IP
 
 MEDIAMTX_YML=/opt/streamer/config/mediamtx.yml
 envsubst < /opt/streamer/config/mediamtx.yml.tmpl > "$MEDIAMTX_YML"
@@ -218,6 +233,7 @@ case "$ICE_HOST_SOURCE" in
   env)  log "  ICE host          : $ICE_HOST_CANDIDATE (from ICE_HOST_CANDIDATE env)" ;;
   *)    log "  ICE host          : auto-detect failed - announcing all interfaces" ;;
 esac
+log "  WebRTC UDP bind   : ${WEBRTC_LISTEN_IP:-0.0.0.0}:8189"
 log "  STUN              : ${STUN_SERVER:-none}"
 log "  GST_DEBUG         : $GST_DEBUG"
 # Pi-only diagnostics: surface the two things that turn the bcm2835 H.264

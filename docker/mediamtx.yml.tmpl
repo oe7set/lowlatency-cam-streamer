@@ -37,8 +37,13 @@ webrtcTrustedProxies: []
 # explicit hosts. Otherwise (no list, no detection) it falls back to
 # enumerating every interface, which makes browsers waste their ICE
 # connectivity-check budget on docker-bridge / APIPA / loopback IPs.
-webrtcLocalUDPAddress: :8189
-webrtcLocalTCPAddress: :8189
+# Bind the UDP listener explicitly to the announced IP when we know it.
+# Empty WEBRTC_LISTEN_IP -> entrypoint.sh substitutes nothing -> "::8189"
+# would be invalid YAML, so we substitute the IP+colon as a single token.
+webrtcLocalUDPAddress: ${WEBRTC_LISTEN_IP}:8189
+# TCP fallback disabled. UDP is fine on a LAN, and binding both UDP and TCP
+# to the same port has caused candidate confusion on some browsers.
+webrtcLocalTCPAddress: ''
 webrtcIPsFromInterfaces: ${ICE_USE_INTERFACES}
 webrtcIPsFromInterfacesList: []
 webrtcAdditionalHosts: [${ICE_HOST_CANDIDATE_LIST}]
